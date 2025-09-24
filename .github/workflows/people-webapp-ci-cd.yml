@@ -1,0 +1,45 @@
+name: CI/CD Pipeline
+
+on:
+  push:
+    branches:
+      - ci-cd
+
+env:
+  IMAGE_NAME: people.webapp
+  ACR_NAME: peoplecli
+  ACR_LOGIN_SERVER: peoplecli.azurecr.io
+
+jobs:
+  build-and-push-docker-image:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+ 
+      - name: Login to Azure
+        uses: azure/login@v2
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+      - name: Login to Azure Container Registry
+        run: az acr login -n $ACR_NAME
+
+      - name: Count existing tags and configure the image tag
+        run: |
+          COUNT=$(az acr repository show-tags -n $ACR_NAME --repository $IMAGE_NAME -o tsv | wc -l)
+          IMAGE_TAG=v$(expr $COUNT + 1)
+          echo "IMAGE_TAG=$IMAGE_TAG" >> $GITHUB_ENV
+
+      - name: Build and push Docker image
+        run: |
+          FQ_IMAGE_NAME=$ACR_LOGIN_SERVER/$IMAGE_NAME:$IMAGE_TAG
+          echo "FQ_IMAGE_NAME=$FQ_IMAGE_NAME" >> $GITHUB_ENV
+          docker build -t $FQ_IMAGE_NAME .
+          docker push $FQ_IMAGE_NAME
+
+      - name: Logout from Azure Container Registry
+        run: docker logout $ACR_LOGIN_SERVER
+        
+      - name: Cleanup Docker images
+        run: docker image rm $FQ_IMAGE_NAME
