@@ -1,0 +1,34 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: people-webapp-deployment
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: people-webapp
+  template:
+    metadata:
+      labels:
+        app: people-webapp
+    spec:
+      containers:
+        - name: people-webapp
+          image: <FQ_IMAGE_NAME>
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 5000
+          resources:
+            requests:
+              cpu: "500m"
+              memory: "768Mi"
+            limits:
+              cpu: "750m"
+              memory: "1024Mi"
+          env:
+            - name: UseInMemoryDatabase
+              value: "False"
+            - name: KeyVaultName
+              value: kv-people-marco
+            - name: ManagedIdentityClientId
+              value: <MANAGED_CLIENT_ID>
