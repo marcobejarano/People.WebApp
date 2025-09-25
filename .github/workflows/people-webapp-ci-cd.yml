@@ -55,9 +55,6 @@ jobs:
       - name: Logout from Azure Container Registry
         run: docker logout $ACR_LOGIN_SERVER
         
-      - name: Cleanup Docker images
-        run: docker image rm $FQ_IMAGE_NAME
-
   deploy-to-aks:
     runs-on: ubuntu-24.04
     needs: build-and-push-docker-image
