@@ -1,9 +1,9 @@
-name: CI/CD Pipeline
+name: CI/CD Pipeline (Helm)
 
 on:
   push:
     branches:
-      - ci-cd
+      - ci-cd-helm
 
 env:
   IMAGE_NAME: people.webapp
@@ -55,7 +55,7 @@ jobs:
       - name: Logout from Azure Container Registry
         run: docker logout $ACR_LOGIN_SERVER
         
-  deploy-to-aks:
+  deploy-to-aks-with-helm:
     runs-on: ubuntu-24.04
     needs: build-and-push-docker-image
 
@@ -71,14 +71,17 @@ jobs:
       - name: Configure Kubernetes context
         run: az aks get-credentials -g $RG_NAME -n $CLUSTER_NAME
         
-      - name: Configure Kubernetes Manifest
+      - name: Update Helm values.yaml
         env:
           FQ_IMAGE_NAME: ${{ needs.build-and-push-docker-image.outputs.fq_image_name }}
         run: |
           MANAGED_CLIENT_ID=$(az identity list --query "[?contains(name, '$AKS_POOL_NODE_NAME')].clientId" -o tsv)
-          sed -i "s|<FQ_IMAGE_NAME>|$FQ_IMAGE_NAME|g" ./aks/deployment.yml
-          sed -i "s|<MANAGED_CLIENT_ID>|$MANAGED_CLIENT_ID|g" ./aks/deployment.yml
-          cat ./aks/deployment.yml
-          
-      - name: Update Deployment
-        run: kubectl apply -f ./aks/deployment.yml
+          sed -i "s|<FQ_IMAGE_NAME>|$FQ_IMAGE_NAME|g" ./helm/values.yaml
+          sed -i "s|<MANAGED_CLIENT_ID>|$MANAGED_CLIENT_ID|g" ./helm/values.yaml
+          cat ./helm/values.yaml
+
+      - name: Helm Lint
+        run: helm lint ./helm
+        
+      - name: Deploy with Helm
+        run: helm upgrade -i people-web-app-helm ./helm/
