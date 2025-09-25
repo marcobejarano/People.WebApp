@@ -22,6 +22,6 @@ spec:
             - name: UseInMemoryDatabase
               value: "False"
             - name: KeyVaultName
-              value: kv-people
+              value: kv-people-marco
             - name: ManagedIdentityClientId
               value: <MANAGED_CLIENT_ID>
