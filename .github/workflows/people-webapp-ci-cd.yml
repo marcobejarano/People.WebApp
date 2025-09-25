@@ -38,14 +38,19 @@ jobs:
           IMAGE_TAG=v$(expr $COUNT + 1)
           echo "IMAGE_TAG=$IMAGE_TAG" >> $GITHUB_ENV
 
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
       - name: Build and push Docker image
         id: build-image
         run: |
           FQ_IMAGE_NAME=$ACR_LOGIN_SERVER/$IMAGE_NAME:$IMAGE_TAG
           echo "FQ_IMAGE_NAME=$FQ_IMAGE_NAME" >> $GITHUB_ENV
           echo "FQ_IMAGE_NAME=$FQ_IMAGE_NAME" >> $GITHUB_OUTPUT
-          docker build -t $FQ_IMAGE_NAME .
-          docker push $FQ_IMAGE_NAME
+          docker buildx build \
+            --platform linux/amd64,linux/arm64 \
+            -t $FQ_IMAGE_NAME \
+            --push .
 
       - name: Logout from Azure Container Registry
         run: docker logout $ACR_LOGIN_SERVER
