@@ -7,7 +7,7 @@ image:
 app:
   env:
     UseInMemoryDatabase: "False"
-    KeyVaultName: "kv-people-marco"
+    KeyVaultName: <KEY_VAULT_NAME>
     ManagedIdentityClientId: <MANAGED_CLIENT_ID>
 
 service:

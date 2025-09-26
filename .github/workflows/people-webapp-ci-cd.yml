@@ -1,21 +1,77 @@
-name: CI/CD Pipeline (Helm)
+name: CI/CD Pipeline (Helm + Terraform)
 
 on:
   push:
     branches:
-      - ci-cd-helm
-
+      - ci-cd-iac
+      
 env:
   IMAGE_NAME: people.webapp
-  ACR_NAME: peoplecli
-  ACR_LOGIN_SERVER: peoplecli.azurecr.io
-  RG_NAME: rg-aks-people
-  CLUSTER_NAME: aks-people
-  AKS_POOL_NODE_NAME: aks-people-agentpool
 
 jobs:
+  infrastructure:
+    runs-on: ubuntu-24.04
+
+    outputs:
+      acr_name: ${{ steps.terraform-apply.outputs.ACR_NAME }}
+      acr_login_server: ${{ steps.terraform-apply.outputs.ACR_LOGIN_SERVER }}
+      rg_name: ${{ steps.terraform-apply.outputs.RG_NAME }}
+      cluster_name: ${{ steps.terraform-apply.outputs.CLUSTER_NAME }}
+      aks_pool_node_name: ${{ steps.terraform-apply.outputs.AKS_POOL_NODE_NAME }}
+      key_vault_name: ${{ steps.terraform-apply.outputs.KEY_VAULT_NAME }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+      
+      - name: Login to Azure
+        uses: azure/login@v2
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+            
+      - name: Configure Azure credentials from GitHub Secret
+        run: |
+          echo "ARM_CLIENT_ID=$(echo '${{ secrets.AZURE_CREDENTIALS }}' | jq -r '.clientId')" >> $GITHUB_ENV
+          echo "ARM_CLIENT_SECRET=$(echo '${{ secrets.AZURE_CREDENTIALS }}' | jq -r '.clientSecret')" >> $GITHUB_ENV
+          echo "ARM_SUBSCRIPTION_ID=$(echo '${{ secrets.AZURE_CREDENTIALS }}' | jq -r '.subscriptionId')" >> $GITHUB_ENV
+          echo "ARM_TENANT_ID=$(echo '${{ secrets.AZURE_CREDENTIALS }}' | jq -r '.tenantId')" >> $GITHUB_ENV
+        shell: bash
+          
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3  
+        with:
+          terraform_wrapper: false   
+      
+      - name: Terraform Init
+        working-directory: ./iac
+        run: |
+          STORAGE_ACCOUNT_NAME=$(grep 'storage_account_name' backend.tf | awk '{print $3}' | tr -d '"')
+          RESOURCE_GROUP_NAME=$(grep 'resource_group_name' backend.tf | awk '{print $3}' | tr -d '"')
+          
+          ARM_ACCESS_KEY=$(az storage account keys list -n $STORAGE_ACCOUNT_NAME -g $RESOURCE_GROUP_NAME --query '[0].value' -o tsv)
+          echo "ARM_ACCESS_KEY=${ARM_ACCESS_KEY}" >> $GITHUB_ENV
+          
+          terraform init
+      
+      - name: Terraform Plan        
+        working-directory: ./iac
+        run: terraform plan
+      
+      - name: Terraform Apply
+        working-directory: ./iac
+        id: terraform-apply
+        run: |
+          terraform apply -auto-approve
+          echo "ACR_NAME=$(terraform output -raw acr_name)" >> $GITHUB_OUTPUT
+          echo "acr_login_server=$(terraform output -raw acr_login_server)" >> $GITHUB_OUTPUT
+          echo "rg_name=$(terraform output -raw rg_name)" >> $GITHUB_OUTPUT
+          echo "cluster_name=$(terraform output -raw cluster_name)" >> $GITHUB_OUTPUT
+          echo "aks_pool_node_name=$(terraform output -raw aks_pool_node_name)" >> $GITHUB_OUTPUT
+          echo "key_vault_name=$(terraform output -raw key_vault_name)" >> $GITHUB_OUTPUT
+
   build-and-push-docker-image:
     runs-on: ubuntu-24.04
+    needs: infrastructure
 
     outputs:
       fq_image_name: ${{ steps.build-image.outputs.FQ_IMAGE_NAME }}
@@ -30,11 +86,11 @@ jobs:
           creds: ${{ secrets.AZURE_CREDENTIALS }}
 
       - name: Login to Azure Container Registry
-        run: az acr login -n $ACR_NAME
+        run: az acr login -n ${{ needs.infrastructure.outputs.acr_name }}
 
       - name: Count existing tags and configure the image tag
         run: |
-          COUNT=$(az acr repository show-tags -n $ACR_NAME --repository $IMAGE_NAME -o tsv | wc -l)
+          COUNT=$(az acr repository show-tags -n ${{ needs.infrastructure.outputs.acr_name }} --repository $IMAGE_NAME -o tsv | wc -l)
           IMAGE_TAG=v$(expr $COUNT + 1)
           echo "IMAGE_TAG=$IMAGE_TAG" >> $GITHUB_ENV
 
@@ -53,11 +109,11 @@ jobs:
             --push .
 
       - name: Logout from Azure Container Registry
-        run: docker logout $ACR_LOGIN_SERVER
+        run: docker logout ${{ needs.infrastructure.outputs.acr_login_server }}
         
   deploy-to-aks-with-helm:
     runs-on: ubuntu-24.04
-    needs: build-and-push-docker-image
+    needs: [build-and-push-docker-image, infrastructure]
 
     steps:
       - name: Checkout code
@@ -69,15 +125,20 @@ jobs:
           creds: ${{ secrets.AZURE_CREDENTIALS }}
 
       - name: Configure Kubernetes context
-        run: az aks get-credentials -g $RG_NAME -n $CLUSTER_NAME
+        run: az aks get-credentials -g ${{ needs.infrastructure.outputs.rg_name }} -n ${{ needs.infrastructure.outputs.cluster_name }}
         
       - name: Update Helm values.yaml
         env:
           FQ_IMAGE_NAME: ${{ needs.build-and-push-docker-image.outputs.fq_image_name }}
+          KEY_VAULT_NAME: ${{ needs.infrastructure.outputs.key_vault_name }}
         run: |
-          MANAGED_CLIENT_ID=$(az identity list --query "[?contains(name, '$AKS_POOL_NODE_NAME')].clientId" -o tsv)
+          MANAGED_CLIENT_ID=$(az identity list --query "[?contains(name, '${{ needs.infrastructure.outputs.cluster_name }}-${{ needs.infrastructure.outputs.aks_pool_node_name }}')].clientId" -o tsv)
+          echo "FQ_IMAGE_NAME=${FQ_IMAGE_NAME}"
+          echo "KEY_VAULT_NAME=${KEY_VAULT_NAME}"
+          echo "MANAGED_CLIENT_ID=${MANAGED_CLIENT_ID}"
           sed -i "s|<FQ_IMAGE_NAME>|$FQ_IMAGE_NAME|g" ./helm/values.yaml
-          sed -i "s|<MANAGED_CLIENT_ID>|$MANAGED_CLIENT_ID|g" ./helm/values.yaml
+          sed -i "s|<KEY_VAULT_NAME>|$KEY_VAULT_NAME|g" ./helm/values.yaml
+          sed -i "s|<MANAGED_CLIENT_ID>|$MANAGED_CLIENT_ID|g" ./helm/values.yaml   
           cat ./helm/values.yaml
 
       - name: Helm Lint
