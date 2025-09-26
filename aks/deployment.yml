@@ -32,3 +32,15 @@ spec:
               value: kv-people-marco
             - name: ManagedIdentityClientId
               value: <MANAGED_CLIENT_ID>
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: people-webapp-service
+spec:
+  selector:
+    app: people-webapp
+  type: LoadBalancer
+  ports:
+    - port: 80
+      targetPort: 5000
