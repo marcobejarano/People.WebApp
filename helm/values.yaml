@@ -17,6 +17,7 @@ service:
   containerPort: 5000
   annotations:
     service.beta.kubernetes.io/azure-load-balancer-internal: "false"
+    service.beta.kubernetes.io/azure-load-balancer-ip-address-type: "public"
 
 resources:
   limits:
